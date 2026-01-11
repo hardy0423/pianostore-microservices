@@ -1,0 +1,72 @@
+# Nom du workflow GitHub Actions
+name: Catalog Service
+
+# Déclencheurs du workflow
+on:
+  push:
+    # Déclenche uniquement si des fichiers dans le dossier catalog-service/ sont modifiés
+    paths:
+      - catalog-service/**
+    # Déclenche uniquement sur la branche "main"
+    branches:
+      - "main"
+  pull_request:
+    # Déclenche quand une PR est ouverte ou mise à jour sur la branche "main"
+    branches: [main]
+
+# Définition des jobs
+jobs:
+  build:
+    # Nom du job
+    name: Build
+    # S'exécute sur un runner Ubuntu fourni par GitHub
+    runs-on: ubuntu-latest
+
+    # Variables d'environnement pour ce job
+    env:
+      # Dossier de travail pour toutes les commandes run
+      working-directory: ./catalog-service
+      # Nom de l'image Docker à construire et pousser
+      DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/bookstore-catalog-service
+
+    # Définit le répertoire de travail par défaut pour toutes les étapes run
+    defaults:
+      run:
+        working-directory: ${{ env.working-directory }}
+
+    # Étapes du job
+    steps:
+      # 1️⃣ Récupère le code source du dépôt
+      - uses: actions/checkout@v5
+
+      # 2️⃣ Installer Java 21 (Temurin) et configurer le cache Maven
+      - name: Setup Java 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: "maven"
+
+      # 3️⃣ Rendre le Maven Wrapper exécutable
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+
+      # 4️⃣ Compiler et tester le projet avec Maven
+      - name: Build with Maven
+        run: ./mvnw -ntp verify
+
+      # 5️⃣ Connexion à Docker Hub pour pouvoir pousser l'image
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 6️⃣ Construire l'image Docker du service et la pousser sur Docker Hub
+      - name: Build and Publish Docker Image
+        run: |
+          # Crée l'image Docker Spring Boot à partir du projet Maven
+          ./mvnw spring-boot:build-image -DskipTests
+          # Affiche le nom de l'image et la pousse sur Docker Hub
+          echo "Pushing the image $DOCKER_IMAGE_NAME to Docker Hub..."
+          docker push $DOCKER_IMAGE_NAME
