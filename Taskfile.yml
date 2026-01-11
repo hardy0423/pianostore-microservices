@@ -1,0 +1,105 @@
+version: "3" # Version minimale de Task requise
+
+vars:
+  # Détecte automatiquement l’OS (linux / darwin / windows)
+  GOOS: "{{default OS .GOOS}}"
+
+  # Utilise mvnw.cmd sur Windows, ./mvnw ailleurs
+  MVNW: '{{if eq .GOOS "windows"}}mvnw.cmd{{else}}./mvnw{{end}}'
+
+  # Dossier contenant les docker-compose
+  DC_DIR: "deployment/docker-compose"
+
+  # Fichiers docker-compose séparés par responsabilité
+  INFRA_DC_FILE: "{{.DC_DIR}}/infra.yml"
+  APPS_DC_FILE: "{{.DC_DIR}}/apps.yml"
+  MONITORING_DC_FILE: "{{.DC_DIR}}/monitoring.yml"
+
+  # Commande sleep compatible Windows / Linux
+  SLEEP_CMD: '{{if eq .GOOS "windows"}}timeout{{else}}sleep{{end}}'
+
+tasks:
+  # Tâche par défaut → exécutée si on tape juste `task`
+  default:
+    cmds:
+      - task: test
+
+  # Lance les tests Maven (après formatage)
+  test:
+    deps: [format]
+    cmds:
+      - "{{.MVNW}} clean verify"
+
+  # Formatage automatique du code avec Spotless
+  format:
+    cmds:
+      - "{{.MVNW}} spotless:apply"
+
+  # Build des images Docker pour chaque microservice
+  build:
+    cmds:
+      - "{{.MVNW}} verify"
+      # - "{{.MVNW}} -pl catalog-service spring-boot:build-image -DskipTests"
+      # - "{{.MVNW}} -pl order-service spring-boot:build-image -DskipTests"
+      # - "{{.MVNW}} -pl notification-service spring-boot:build-image -DskipTests"
+      # - "{{.MVNW}} -pl api-gateway spring-boot:build-image -DskipTests"
+      # - "{{.MVNW}} -pl bookstore-webapp spring-boot:build-image -DskipTests"
+
+  # Démarre l’infrastructure (DB, MQ, Auth, etc.)
+  start_infra:
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} up -d"
+
+  # Arrête et supprime les conteneurs d’infrastructure
+  stop_infra:
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} stop"
+      - "docker compose -f {{.INFRA_DC_FILE}} rm -f"
+
+  # Restart infra = stop → pause → start
+  restart_infra:
+    cmds:
+      - task: stop_infra
+      - task: sleep
+      - task: start_infra
+
+  # Démarre le monitoring (Grafana, Prometheus, etc.)
+  start_monitoring:
+    cmds:
+      - "docker compose -f {{.MONITORING_DC_FILE}} up -d"
+
+  stop_monitoring:
+    cmds:
+      - "docker compose -f {{.MONITORING_DC_FILE}} stop"
+      - "docker compose -f {{.MONITORING_DC_FILE}} rm -f"
+
+  restart_monitoring:
+    cmds:
+      - task: stop_monitoring
+      - task: sleep
+      - task: start_monitoring
+
+  # Démarre TOUT : infra + apps (après build)
+  start:
+    deps: [build]
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} -f {{.APPS_DC_FILE}} up -d"
+
+  # Arrête toutes les apps + infra
+  stop:
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} -f {{.APPS_DC_FILE}} stop"
+      - "docker compose -f {{.INFRA_DC_FILE}} -f {{.APPS_DC_FILE}} rm -f"
+
+  restart:
+    cmds:
+      - task: stop
+      - task: sleep
+      - task: start
+
+  # Pause configurable (par défaut 5 secondes)
+  sleep:
+    vars:
+      DURATION: "{{default 5 .DURATION}}"
+    cmds:
+      - "{{.SLEEP_CMD}} {{.DURATION}}"
